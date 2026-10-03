@@ -20,12 +20,11 @@ The interactive visualization layer maps the options chain to isolate derivative
 
 ---
 
-## 🛠️ Project Components
+##Project Components
 
 ### 1. Ingestion Layer (Python)
-The backend pipeline automates raw data retrieval and transforms untyped API payloads into clean tabular metrics. 
-* **Key Dependencies:** `yfinance` (or custom API client), `pandas`, `psycopg2` / `sqlalchemy`.
-* **Process:** Connects to the QQQ ticker, iterates through all available expiration dates, collects the calls/puts tables, appends the snapshot metadata, and streams the batch directly into the relational warehouse.
+* **Key Dependencies:** `yfinance`, `pandas`, `sqlalchemy`.
+* **Process:** Connects to the QQQ ticker, iterates through all available expiration dates, collects the calls/puts data, and streams the batch directly into the relational warehouse.
 
 ### 2. Relational Schema (PostgreSQL)
 The database structure is optimized for high-write financial timeseries snapshots.
@@ -60,36 +59,25 @@ CREATE TABLE qqq_options_matrix (
 );
 ```
 
-### 3. Business Intelligence & Dashboards (Power BI)
+### 3. Dashboards (Power BI)
 The reporting tier establishes a high-performance connection directly into the Postgres instance.
 * **Data Connectivity:** Native PostgreSQL database connector.
 * **Core Visualization Engine:** 
-  * **Visual Type:** Scatter Chart / Line Chart.
   * **X-Axis:** `strike_price`
   * **Y-Axis:** `delta`
-  * **Legend/Series:** `option_type`
+  * **Legend** `option_type`
 
-#### 🎛️ Interactive Controls & Filters
+#### Interactive Controls & Filters
 The dashboard features integrated report canvas filters that allow users to isolate specific market mechanics dynamically:
 * **Option Type Slicer:** Instantly toggles or multi-selects between **Call** and **Put** options to isolate individual curves or view their mirrored symmetry side-by-side.
 * **Expiration Date Slicer:** Dynamically filters the underlying options matrices by specific contract expiries, allowing users to analyze how the slope of the sigmoid curve steepens or flattens as Time to Maturity ($T$) approaches zero.
 
-#### 🖥️ Dashboard Preview
+#### Dashboard Preview
 > 💡 *To interact with the live dashboard, view the deployment linked below or watch the animated demonstration.*
 
 ![QQQ Options Sigmoid Dashboard](./images/dashboard_demo.gif)
 ---
 
-## 🚀 Quick Start & Execution
-
-To replicate this environment or review the system locally:
-
-1. **Database Set Up:** Ensure a local or cloud-hosted PostgreSQL instance is active, and run the SQL schema definitions above.
-2. **Environment Configuration:** Configure your database credentials via a `.env` or application config file.
-3. **Run Pipeline:** Execute your data extraction script to populate your database tables with a current QQQ market snapshot.
-4. **Launch Dashboard:** Open the `.pbix` Power BI project template file, point the data source settings to your PostgreSQL instance, and hit **Refresh**.
-
----
-
+## Insights
 
 A sigmoid delta vs. strike price curve is not completely smooth due to market noise, discrete trading intervals, and order book dynamics. Key factors include bid-ask bounce, liquidity gaps, and stale quotes.Market Microstructure and Data IssuesBid-Ask Bounce: Real-time trades alternate between the bid and ask prices, creating small price jumps that distort implied volatility and delta.Stale Quotes: Out-of-the-money options may not trade frequently, meaning their quoted prices reflect older market conditions rather than the current second.Discrete Strikes: Options exist only at fixed strike intervals, leaving gaps where intermediate values must be estimated or connected.Supply, Demand, and Pricing AnomaliesLiquidity Gaps: Low trading volume at certain strikes causes wider bid-ask spreads and erratic pricing inputs.Asynchronous Trades: Options at different strikes are not executed at the exact same millisecond, capturing different underlying asset prices.Arbitrage and Order Flow: Large block orders or temporary buying pressure can cause a single strike to misprice relative to its neighbors before market makers adjust.
