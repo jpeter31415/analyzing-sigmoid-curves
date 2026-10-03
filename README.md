@@ -1,4 +1,5 @@
 
+
 ## QQQ Options Analytics: Delta Sigmoid Curve Pipeline
 
 An end-to-end data pipeline that QQQ options data, creates a storage layer, and generates interactive financial visualizations. The primary analytical engine isolates and graphs the mathematical cumulative distribution (sigmoid) curves created by mapping option strike prices against their corresponding Deltas ($\Delta$).
@@ -41,6 +42,7 @@ The reporting tier establishes a connection directly into the Postgres database.
 
 #### Dashboard Preview
 <img width="1425" height="761" alt="call_curve" src="https://github.com/user-attachments/assets/51963442-e8b9-45dc-8107-ec7c23e1e833" />
+<img width="1410" height="760" alt="put_curve" src="https://github.com/user-attachments/assets/cf17ac96-3499-42dc-82d5-7dd9885f05a6" />
 ---
 
 ## Insights
