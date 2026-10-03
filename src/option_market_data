@@ -1,0 +1,192 @@
+import os
+import logging
+from datetime import datetime
+import pandas as pd
+import yfinance as yf
+from sqlalchemy import create_engine, Table, Column, String, Date, Numeric, BigInteger, MetaData
+from sqlalchemy.dialects.postgresql import insert
+
+# ==================================
+# logging and database configuration
+# ==================================
+
+#logging setup
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - [%(levelname)s] - %(message)s'
+    )
+
+#database credentials 
+db_user = os.getenv('db_user', 'postgres')
+db_password = os.getenv('db_password', 'postgres')
+db_host = os.getenv('db_host', 'localhost')
+db_port = os.getenv('db_port', '5432')
+db_name = os.getenv('db_name', 'options_analytics')
+
+#create connection engine for PSQL
+database_url = f'postgresql+psycopg2://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}'
+engine = create_engine(database_url)
+metadata = MetaData()
+
+#define table metadata using sqlalchemy Table
+options_chain_table = Table(
+    'option_market_data', 
+    metadata,
+    Column('contract_symbol', String(30), primary_key=True),  
+    Column('data_date', Date, primary_key=True),              
+    Column('ticker', String(10), nullable=False),   
+    Column('expiration_date', Date, nullable=False),          
+    Column('strike_price', Numeric(10, 2), nullable=False),
+    Column('option_type', String(4), nullable=False),        
+    Column('bid', Numeric(10, 2)),
+    Column('ask', Numeric(10, 2)),
+    Column('last_price', Numeric(10, 2)),
+    Column('volume', BigInteger),
+    Column('open_interest', BigInteger),
+    Column('implied_volatility', Numeric(10, 6)),
+)
+
+# ===============
+# data extraction
+# ===============
+
+def extract_full_options_chain(ticker: str)->pd.DataFrame():
+    """
+    Uses yfinance to retrieve the entire options chain for ticker.
+    """
+    logging.info(f'Initializing complete options harvesting for {ticker}')
+    ticker_obj = yf.Ticker(ticker)
+    
+    #retrieve available expirations as a tuple ('YYY-MM-DD')
+    expirations = ticker_obj.options #tuple of expiration dates
+    if not expirations:
+        logging.info(f'No options discovered for {ticker}')
+        return pd.DataFrame()
+    
+    master_records = [] #initialize a list of pd.DataFrames
+    current_trading_date = datetime.today().strftime('%Y-%m-%d')
+    
+    #iterate through each expiration date to extract chains
+    for expiry in expirations:
+        try:
+            logging.info(f'Extracting chain information: {ticker} {expiry}')
+            chain = ticker_obj.option_chain(expiry)
+            
+            #unpacking calls and puts into dataframes
+            calls_df = chain.calls.copy()
+            puts_df = chain.puts.copy()
+            
+            #adding option type columns to the dataframes
+            calls_df['option_type'] = 'CALL'
+            puts_df['option_type'] = 'PUT'
+            
+            #combine calls and puts and add columns from table metadata
+            combined_expiry_df = pd.concat([calls_df,puts_df], ignore_index=True)
+            combined_expiry_df['expiration_date'] = expiry
+            combined_expiry_df['ticker'] = ticker
+            combined_expiry_df['data_date'] = current_trading_date
+            
+            #append df for expiry to master list
+            master_records.append(combined_expiry_df)
+            
+        except Exception as e:
+            logging.error(f'Skipping expiration date {expiry} due to retrieval failure {e}')
+            continue
+        
+    if not master_records:
+        return pd.DataFrame()
+        
+    #consolidate into a master data frame
+    raw_df = pd.concat(master_records, ignore_index=True)
+    return clean_and_normalize_schema(raw_df)        
+
+#=================================
+# data transformation and cleaning
+#=================================
+
+def clean_and_normalize_schema(raw_df:pd.DataFrame())->pd.DataFrame():
+    """
+    Maps API columns to PSQL columns and handles null values
+    """
+    logging.info('Normalizing options records for database schema')
+    
+    #rename API columns for PSQL
+    df = raw_df.rename(columns={
+        'contractSymbol':'contract_symbol',
+        'strike':'strike_price',
+        'lastPrice':'last_price',
+        'openInterest':'open_interest',
+        'impliedVolatility':'implied_volatility'
+        })
+    
+    #replace Infinity/NaN values in open_interest, volume, bid, ask
+    df['open_interest'] = df['open_interest'].fillna(0).astype(int)
+    df['volume'] = df['volume'].fillna(0).astype(int)
+    df['bid'] = df['bid'].fillna(0)
+    df['ask'] = df['ask'].fillna(0)
+    
+    #target columns for cleaned df
+    target_columns = [
+        'contract_symbol', 'data_date', 'ticker', 'expiration_date','strike_price',
+        'option_type', 'bid', 'ask', 'last_price', 'volume', 'open_interest',
+        'implied_volatility'
+        ]
+
+    return df[target_columns]
+
+#========================
+#loading data to database          
+#========================
+
+def init_db():
+    """
+    Building database in PSQL
+    """
+    logging.info('Initializing PSQL Tables')
+    metadata.create_all(engine)
+
+def load_options_to_psql(df:pd.DataFrame):
+    """
+    Executes an ON CONFLICT clause to prevent duplicate rows
+    """
+    if df.empty:
+        logging.warning('Input dataframe is empty.')
+        return
+    
+    logging.info(f'Commiting {len(df)} options chain rows to PSQL')
+    records = df.to_dict(orient='records') #convert df to list of dictionaries
+    
+    #convert data frame strings to datetime objects for PSQL
+    for row in records:
+        row['data_date'] = datetime.strptime(str(row['data_date']), '%Y-%m-%d').date()
+        row['expiration_date'] = datetime.strptime(str(row['expiration_date']), '%Y-%m-%d').date()
+    
+    #insert statement
+    stmt = insert(options_chain_table).values(records)
+    
+    #upsert logic
+    upsert_stmt = stmt.on_conflict_do_update(
+        index_elements=['contract_symbol', 'data_date'],
+        set_={
+            'bid':stmt.excluded.bid,
+            'ask':stmt.excluded.ask,
+            'last_price':stmt.excluded.last_price,
+            'volume':stmt.excluded.volume,
+            'open_interest':stmt.excluded.open_interest,
+            'implied_volatility':stmt.excluded.implied_volatility
+            }
+        )
+    
+    #execute statement
+    with engine.connect() as connection:
+        connection.execute(upsert_stmt)
+        connection.commit()  
+        logging.info("Database ingestion successfully committed to PostgreSQL.")
+
+#=========
+#execution
+#=========
+if __name__=='__main__':
+    init_db()
+    df = extract_full_options_chain('QQQ')
+    load_options_to_psql(df)
