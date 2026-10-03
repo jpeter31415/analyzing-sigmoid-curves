@@ -22,7 +22,7 @@ The interactive visualization layer maps the options chain to isolate derivative
 
 ##Project Components
 
-### 1. Ingestion Layer (Python)
+### 1. Ingestion Layer (Python, PostgreSQL)
 * **Key Dependencies:** `yfinance`, `pandas`, `sqlalchemy`.
 * **Process:** Connects to the QQQ ticker, iterates through all available expiration dates, collects the calls/puts data, and streams the data directly into a PostgreSQL database.
 
@@ -39,9 +39,7 @@ The reporting tier establishes a connection directly into the Postgres database.
 * **Expiration Date Slicer:** Dynamically filters the underlying options by specific contract expirations, allowing users to analyze how the slope of the sigmoid curve steepens or flattens as time to maturity approaches zero.
 
 #### Dashboard Preview
-> 💡 *To interact with the live dashboard, view the deployment linked below or watch the animated demonstration.*
 
-![QQQ Options Sigmoid Dashboard](./images/dashboard_demo.gif)
 ---
 
 ## Insights
