@@ -1,19 +1,19 @@
-markdown# QQQ Options Analytics: Delta Sigmoid Curve Pipeline
+QQQ Options Analytics: Delta Sigmoid Curve Pipeline
 
-An end-to-end data pipeline that programmatically extracts Invesco QQQ Trust options data, architectures a relational storage layer, and generates interactive financial visualizations. The primary analytical engine isolates and graphs the mathematical cumulative distribution (sigmoid) curves created by mapping option strike prices against their corresponding Deltas ($\Delta$).
+An end-to-end data pipeline that QQQ options data, creates a storage layer, and generates interactive financial visualizations. The primary analytical engine isolates and graphs the mathematical cumulative distribution (sigmoid) curves created by mapping option strike prices against their corresponding Deltas ($\Delta$).
 
-## 🏗️ System Architecture
+## How It Works
 
-Use code with caution.[Yahoo Finance] ──(Python ETL)──> [PostgreSQL Database] ──> [Power BI Interactive Dashboard]
+[Yahoo Finance] ──(Python)──> [PostgreSQL Database] ──> [Power BI Interactive Dashboard]
 1. **Extraction (Python):** Connects to market APIs, pulls underlying equities data, parses complex option chains, and calculates/extracts real-time Options Greeks.
-2. **Storage (PostgreSQL):** Normalizes and warehouses timeseries asset prices alongside highly granular option chain matrices.
-3. **Visualization (Power BI):** Transforms raw relational records into visual insights, isolating pricing models and risk sensitivity curves.
+2. **Storage (PostgreSQL):** Normalizes and warehouses timeseries asset prices alongside option chain matrices.
+3. **Visualization (Power BI):** Transforms raw data into visual insights, isolating risk sensitivity curves.
 
 ---
 
-## 📊 Analytical Core: The Delta Sigmoid Curve
+## The Delta Sigmoid Curve
 
-The interactive visualization layer maps the options chain to isolate derivative risk positioning across different expiries. By plotting the **Strike Price on the X-Axis** and the **Option Delta ($\Delta$) on the Y-Axis**, the system visually confirms the cumulative distribution function of a normal distribution (the Sigmoid Curve):
+The interactive visualization layer maps the options chain to isolate derivative risk positioning across different expiration dates. By plotting the **Strike Price on the X-Axis** and the **Option Delta ($\Delta$) on the Y-Axis**, the system visually confirms the cumulative distribution function of a normal distribution (the Sigmoid Curve):
 
 * **Call Options ($\Delta \in [0, 1]$):** Form an S-shaped curve ascending from left to right. Deep Out-of-the-Money (OTM) options rest near $0$, shifting sharply at the At-the-Money (ATM) strike ($\approx 0.5$), and flattening near $1.0$ for deep In-the-Money (ITM) positions.
 * **Put Options ($\Delta \in [-1, 0]$):** Form an inverted S-shaped curve. Deep ITM options sit near $-1.0$, crossing ATM near $-0.5$, and rising asymptotically up to $0$ as they decay into deep OTM territory.
