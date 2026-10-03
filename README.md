@@ -1,10 +1,10 @@
-QQQ Options Analytics: Delta Sigmoid Curve Pipeline
+## QQQ Options Analytics: Delta Sigmoid Curve Pipeline
 
 An end-to-end data pipeline that QQQ options data, creates a storage layer, and generates interactive financial visualizations. The primary analytical engine isolates and graphs the mathematical cumulative distribution (sigmoid) curves created by mapping option strike prices against their corresponding Deltas ($\Delta$).
 
 ## How It Works
 
-[Yahoo Finance] ──(Python)──> [PostgreSQL Database] ──> [Power BI Interactive Dashboard]
+(Yahoo Finance) ──(Python)──> (PostgreSQL Database) ──> (PowerBI Interactive Dashboard)
 1. **Extraction (Python):** Connects to market APIs, pulls underlying equities data, parses complex option chains, and calculates/extracts real-time Options Greeks.
 2. **Storage (PostgreSQL):** Normalizes and warehouses timeseries asset prices alongside option chain matrices.
 3. **Visualization (Power BI):** Transforms raw data into visual insights, isolating risk sensitivity curves.
@@ -24,43 +24,10 @@ The interactive visualization layer maps the options chain to isolate derivative
 
 ### 1. Ingestion Layer (Python)
 * **Key Dependencies:** `yfinance`, `pandas`, `sqlalchemy`.
-* **Process:** Connects to the QQQ ticker, iterates through all available expiration dates, collects the calls/puts data, and streams the batch directly into the relational warehouse.
+* **Process:** Connects to the QQQ ticker, iterates through all available expiration dates, collects the calls/puts data, and streams the data directly into a PostgreSQL database.
 
-### 2. Relational Schema (PostgreSQL)
-The database structure is optimized for high-write financial timeseries snapshots.
-
-```sql
--- Underlying Asset Price Engine
-CREATE TABLE qqq_underlying (
-    id SERIAL PRIMARY KEY,
-    snapshot_time TIMESTAMP NOT NULL,
-    open_price NUMERIC(10, 2),
-    high_price NUMERIC(10, 2),
-    low_price NUMERIC(10, 2),
-    close_price NUMERIC(10, 2),
-    volume BIGINT
-);
-
--- Option Chains & Greeks Matrix
-CREATE TABLE qqq_options_matrix (
-    id SERIAL PRIMARY KEY,
-    snapshot_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    expiration_date DATE NOT NULL,
-    strike_price NUMERIC(10, 2) NOT NULL,
-    option_type VARCHAR(4) CHECK (option_type IN ('call', 'put')),
-    last_price NUMERIC(10, 2),
-    implied_volatility NUMERIC(6, 4),
-    delta NUMERIC(5, 4),
-    gamma NUMERIC(5, 4),
-    theta NUMERIC(5, 4),
-    vega NUMERIC(5, 4),
-    volume INT,
-    open_interest INT
-);
-```
-
-### 3. Dashboards (Power BI)
-The reporting tier establishes a high-performance connection directly into the Postgres instance.
+### 2. Dashboards (Power BI)
+The reporting tier establishes a connection directly into the Postgres database.
 * **Data Connectivity:** Native PostgreSQL database connector.
 * **Core Visualization Engine:** 
   * **X-Axis:** `strike_price`
@@ -68,9 +35,8 @@ The reporting tier establishes a high-performance connection directly into the P
   * **Legend** `option_type`
 
 #### Interactive Controls & Filters
-The dashboard features integrated report canvas filters that allow users to isolate specific market mechanics dynamically:
-* **Option Type Slicer:** Instantly toggles or multi-selects between **Call** and **Put** options to isolate individual curves or view their mirrored symmetry side-by-side.
-* **Expiration Date Slicer:** Dynamically filters the underlying options matrices by specific contract expiries, allowing users to analyze how the slope of the sigmoid curve steepens or flattens as Time to Maturity ($T$) approaches zero.
+* **Option Type Slicer:** Instantly toggles between **Call** and **Put** options to isolate individual curves or view their mirrored symmetry side-by-side.
+* **Expiration Date Slicer:** Dynamically filters the underlying options by specific contract expirations, allowing users to analyze how the slope of the sigmoid curve steepens or flattens as time to maturity approaches zero.
 
 #### Dashboard Preview
 > 💡 *To interact with the live dashboard, view the deployment linked below or watch the animated demonstration.*
