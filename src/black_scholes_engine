@@ -1,0 +1,241 @@
+import os
+import logging
+import numpy as np
+import pandas as pd
+from datetime import datetime
+from scipy.stats import norm
+from sqlalchemy import create_engine, Table, Column, String, Date, Numeric, MetaData
+from sqlalchemy.dialects.postgresql import insert
+
+# ==================================
+# logging and database configuration
+# ==================================
+
+#logging setup
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - [%(levelname)s] - %(message)s'
+    )
+
+#database credentials
+db_user = os.getenv("db_user", "postgres")
+db_password = os.getenv("db_password", "postgres")
+db_host = os.getenv("db_host", "localhost")
+db_port = os.getenv("db_port", "5432")
+db_name = os.getenv("db_name", "options_analytics")
+
+#create engine for PSQL
+database_url = f"postgresql+psycopg2://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+engine = create_engine(database_url)
+metadata = MetaData()
+
+# define metadata for greeks table in PSQL
+option_greeks_table = Table(
+    'option_greeks_output',
+    metadata,
+    Column('contract_symbol', String(30), primary_key=True),
+    Column('calculation_date', Date, primary_key=True),   
+    Column('bs_price', Numeric(10, 2)),
+    Column('delta', Numeric(10, 6)),
+    Column('gamma', Numeric(10, 6)),
+    Column('vega', Numeric(10, 6)),
+    Column('theta_daily', Numeric(10, 6)),
+)
+
+#=============
+# calculations
+#=============
+
+class BlackScholesEngine:
+    """ Mathematical engine calculating pricing and risk parameters."""
+    
+    @staticmethod
+    def calculate_greeks(S: float, K: float, T: float, r: float, sigma: float, option_type: str) -> dict:
+        """Computes pricing premiums, Delta, Gamma, Vega, and Theta."""
+        # Guard rails for zero limits or numerical boundary failures
+        if T <= 0.0: T = 1e-5 
+        if sigma <= 0.0: sigma = 1e-5
+
+        d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+        d2 = d1 - sigma * np.sqrt(T)
+        
+        N_d1 = norm.cdf(d1)
+        N_d2 = norm.cdf(d2)
+        n_d1 = norm.pdf(d1)
+
+        if option_type.upper() == "CALL":
+            price = S * N_d1 - K * np.exp(-r * T) * N_d2
+            delta = N_d1
+            theta = (- (S * n_d1 * sigma) / (2 * np.sqrt(T)) - r * K * np.exp(-r * T) * N_d2)
+        else:
+            price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
+            delta = N_d1 - 1.0
+            theta = (- (S * n_d1 * sigma) / (2 * np.sqrt(T)) + r * K * np.exp(-r * T) * norm.cdf(-d2))
+
+        gamma = n_d1 / (S * sigma * np.sqrt(T))
+        vega = S * n_d1 * np.sqrt(T)
+
+        return {
+            "bs_price": price,
+            "delta": delta,
+            "gamma": gamma,
+            "vega": vega / 100.0,       # Scaled: Risk per 1% move in implied volatility
+            "theta_daily": theta / 365.0 # Scaled: Price decay decay per 24-hour cycle
+        }
+
+# ========================
+# sql data pipeline engine
+# ========================
+def execute_database_risk_pipeline(ticker: str, risk_free_rate: float = 0.04) -> pd.DataFrame:
+    """
+    Pulls option contracts from PSQL, processes the mathematics layer, and 
+    constructs a risk matrix.
+    """
+    logging.info(f'Extracting option records from PSQL for ticker: {ticker}')
+    
+    #query targets matching the table schema. get a live spot price
+    query = """
+        SELECT 
+            o.contract_symbol, 
+            o.data_date, 
+            o.expiration_date, 
+            o.strike_price, 
+            o.option_type, 
+            o.implied_volatility,
+            (
+                SELECT t.adj_close_price 
+                FROM ticker_prices t
+                WHERE t.ticker = o.ticker
+                  AND t.date <= o.data_date
+                ORDER BY t.date DESC
+                LIMIT 1
+            ) AS live_spot_price
+        FROM option_market_data o
+        WHERE o.ticker = %(ticker)s
+        ORDER BY o.expiration_date ASC, o.strike_price ASC;
+    """
+
+    
+    try:
+        #read the PSQL query to a pandas df
+        raw_db_df = pd.read_sql(query, con=engine, params={'ticker': ticker})
+        
+        if raw_db_df.empty:
+            logging.warning(f'No records located for ticker {ticker}.')
+            return pd.DataFrame()
+            
+        logging.info(f'Successfully loaded {len(raw_db_df)} records from database. Running calculus routines...')
+        
+        #initiate a list of dictionaries to be transformed into a dataframe
+        calculated_results = []
+        
+        for idx, row in raw_db_df.iterrows():
+            live_spot_price = float(row['live_spot_price'])
+            
+            #calculate dynamic annualized time to maturity (T - t)
+            t = pd.to_datetime(row['data_date'])
+            T = pd.to_datetime(row['expiration_date'])
+            time_to_maturity = (T - t).days / 365.0
+            
+            #skip expired contracts
+            if time_to_maturity <= 0:
+                continue
+
+            #pass database fields into Black-Scholes module
+            greeks = BlackScholesEngine.calculate_greeks(
+                S=live_spot_price,
+                K=float(row['strike_price']),
+                T=time_to_maturity,
+                r=risk_free_rate,
+                sigma=float(row['implied_volatility']),
+                option_type=row['option_type']
+            )
+            
+            #create the dictionary to append to calculated results
+            record = {
+                'contract_symbol': row['contract_symbol'],
+                'calculation_date': row['data_date'],
+                'expiration_date': row['expiration_date'],
+                'strike_price': float(row['strike_price']),
+                'option_type': row['option_type'],
+                'implied_volatility': float(row['implied_volatility']),
+                'time_to_maturity': time_to_maturity
+            }
+            
+            #append greeks to dictionary
+            record.update(greeks) 
+            
+            calculated_results.append(record)
+            
+        return pd.DataFrame(calculated_results)
+        
+    except Exception as e:
+        logging.critical(f'Database pipeline terminated: {e}')
+        raise
+        
+
+# ===============
+# save-back layer 
+# ===============
+def save_greeks_to_database(risk_df: pd.DataFrame):
+    """
+    Creates tables and executes a bulk UPSERT.
+    """
+    if risk_df.empty:
+        logging.warning('risk_df is empty')
+        return
+
+    #generate destination tables
+    metadata.create_all(engine)
+
+    logging.info(f'Filtering and preparing bulk writeback for {len(risk_df)} contracts.')
+    
+    #isolate columns defined in options_greeks_table 
+    allowed_columns = ['contract_symbol', 'calculation_date', 'bs_price', 'delta', 'gamma', 'vega', 'theta_daily']
+    filtered_df = risk_df[allowed_columns].copy()
+        
+    #convert dataframe rows into dictionary
+    records_to_insert = filtered_df.to_dict(orient="records")
+
+    #format the dates into standard Python date objects 
+    for row in records_to_insert:
+        if isinstance(row['calculation_date'], str):
+            row['calculation_date'] = datetime.strptime(row['calculation_date'], '%Y-%m-%d').date()
+        elif hasattr(row['calculation_date'], 'date'):
+            row['calculation_date'] = row['calculation_date'].date()
+
+    #insert and upsert statements
+    insert_stmt = insert(option_greeks_table).values(records_to_insert)
+    upsert_stmt = insert_stmt.on_conflict_do_update(
+        index_elements=['contract_symbol', 'calculation_date'],
+        set_={
+            'bs_price': insert_stmt.excluded.bs_price,
+            'delta': insert_stmt.excluded.delta,
+            'gamma': insert_stmt.excluded.gamma,
+            'vega': insert_stmt.excluded.vega,
+            'theta_daily': insert_stmt.excluded.theta_daily,
+        }
+    )
+
+    with engine.connect() as connection:
+        connection.execute(upsert_stmt)
+        connection.commit()
+    logging.info('Greeks successfully loaded into option_greeks_output.')
+
+
+#=========
+#execution
+#=========
+if __name__ == '__main__':
+    #parameters for analysis
+    target_ticker = 'QQQ'
+    
+    #run loop 
+    risk_matrix_df = execute_database_risk_pipeline(target_ticker)
+    
+    if not risk_matrix_df.empty:
+        print("\n=== RISK MATRIX PREVIEW ===")
+        print(risk_matrix_df[['contract_symbol', 'strike_price', 'option_type', 'bs_price', 'delta', 'gamma', 'vega']].head(10).to_string())
+    
+    #automated save routine
+    save_greeks_to_database(risk_matrix_df)
